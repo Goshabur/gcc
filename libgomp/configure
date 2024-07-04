@@ -671,6 +671,8 @@ PLUGIN_GCN_FALSE
 PLUGIN_GCN_TRUE
 PLUGIN_NVPTX_FALSE
 PLUGIN_NVPTX_TRUE
+PLUGIN_HOST_PROCESS_FALSE
+PLUGIN_HOST_PROCESS_TRUE
 offload_additional_lib_paths
 offload_additional_options
 offload_targets
@@ -15306,6 +15308,10 @@ if test x"$enable_offload_targets" != x; then
     tgt=`echo $tgt | sed 's/=.*//'`
     tgt_plugin=
     case $tgt in
+      host_process)
+	tgt_plugin=host_process
+	PLUGIN_HOST_PROCESS=1
+	;;
       nvptx*)
 	case "${target}" in
 	  aarch64*-*-* | powerpc64le-*-* | x86_64-*-*)
@@ -15374,6 +15380,14 @@ fi
 cat >>confdefs.h <<_ACEOF
 #define OFFLOAD_PLUGINS "$offload_plugins"
 _ACEOF
+
+ if test $PLUGIN_HOST_PROCESS = 1; then
+  PLUGIN_HOST_PROCESS_TRUE=
+  PLUGIN_HOST_PROCESS_FALSE='#'
+else
+  PLUGIN_HOST_PROCESS_TRUE='#'
+  PLUGIN_HOST_PROCESS_FALSE=
+fi
 
  if test $PLUGIN_NVPTX = 1; then
   PLUGIN_NVPTX_TRUE=
@@ -17242,6 +17256,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${MAINTAINER_MODE_TRUE}" && test -z "${MAINTAINER_MODE_FALSE}"; then
   as_fn_error $? "conditional \"MAINTAINER_MODE\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${PLUGIN_HOST_PROCESS_TRUE}" && test -z "${PLUGIN_HOST_PROCESS_FALSE}"; then
+  as_fn_error $? "conditional \"PLUGIN_HOST_PROCESS\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${PLUGIN_NVPTX_TRUE}" && test -z "${PLUGIN_NVPTX_FALSE}"; then

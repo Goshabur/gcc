@@ -1166,6 +1166,11 @@ for tgt in `echo $enable_offload_targets | sed 's/,/ /g'`; do
 
   enable_offloading=1
   case "$tgt" in
+    host_process)
+	#TODO
+	omp_device_property=
+	omp_device_property_tmake_file="${omp_device_property_tmake_file}"
+	;;
     amdgcn*)
   	omp_device_property=omp-device-properties-gcn
   	omp_device_property_tmake_file="${omp_device_property_tmake_file} \$(srcdir)/config/gcn/t-omp-device"
