@@ -198,6 +198,7 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
     if (ftruncate(fd, total_size) == -1) {
         GOMP_PLUGIN_error("ftruncate");
         close(fd);
+        shm_unlink(shm_name);
         return -1;
     }
 
@@ -206,18 +207,21 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
     if (shm_addr == MAP_FAILED) {
         GOMP_PLUGIN_error("mmap");
         close(fd);
+        shm_unlink(shm_name);
         return -1;
     }
 
     // Copy the code and data into the shared memory
     memcpy(shm_addr, img->code, img->code_size);
-    memcpy(shm_addr + img->code_size, img->data, img->data_size);
+    memcpy((char *)shm_addr + img->code_size, img->data, img->data_size);
 
     // Allocate the target_table with 2 entries: one for code, one for data
     *target_table = malloc(2 * sizeof(addr_pair));
     if (*target_table == NULL) {
+        GOMP_PLUGIN_error("malloc failed");
         munmap(shm_addr, total_size);
         close(fd);
+        shm_unlink(shm_name);
         return -1;
     }
 
@@ -250,12 +254,18 @@ GOMP_OFFLOAD_unload_image(int n, unsigned version, const void *target_data)
 
     // Unmap the shared memory
     if (munmap(shm_addr, total_size) == -1) {
-        GOMP_PLUGIN_error("munmap failed");
+        GOMP_PLUGIN_error("munmap failed: %s", strerror(errno));
         return false;
     }
 
-    // Optionally, i can close and delete the shared memory object with close(fd) and shm_unlink("/my_shm");
+    // Optionally, i can remove the shared memory object name with shm_unlink("/my_shm");
     // But i need to be sure no other process needs it
+    char shm_name[256];
+    snprintf(shm_name, sizeof(shm_name), "/my_shm_%d", n);
+    if (shm_unlink(shm_name) == -1) {
+        GOMP_PLUGIN_error("shm_unlink failed: %s", strerror(errno));
+        return false;
+    }
 
     free(pairs);
 
