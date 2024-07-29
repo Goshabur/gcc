@@ -92,6 +92,7 @@ GOMP_OFFLOAD_init_device(int n)
     pid_t pid = fork();
     if (pid == -1) {
         GOMP_PLUGIN_error("Failed to fork a simulated device process");
+        pthread_mutex_destroy(&device->lock);
         return false;
     } else if (pid == 0) {
         // Here we are in the child process and we need to setup the environment for simulation, initialize communication channels, etc.
@@ -119,7 +120,6 @@ GOMP_OFFLOAD_fini_device(int n)
     }
 
     simulated_device *device = &devices[n];
-
     if (!device->initialized) {
         return true;
     }
