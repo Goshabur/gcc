@@ -351,6 +351,19 @@ GOMP_OFFLOAD_free(int n, void *ptr /*, size_t size*/)
     return true;
 }
 
+bool
+is_valid_memory(simulated_device *dev, void *ptr, size_t size)
+{
+    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
+        void *start = dev->allocations[i].ptr;
+        size_t len = dev->allocations[i].size;
+        if (ptr >= start && (char *)ptr + size <= (char *)start + len) {
+            return true;
+        }
+    }
+    return false;
+}
+
 
 bool
 GOMP_OFFLOAD_dev2host(int device, void *dst, const void *src, size_t n)
@@ -363,6 +376,11 @@ GOMP_OFFLOAD_dev2host(int device, void *dst, const void *src, size_t n)
     simulated_device *dev = &devices[device];
     if (!dev->initialized) {
         GOMP_PLUGIN_error("Attempt to copy from an uninitialized device %d\n", device);
+        return false;
+    }
+
+    if (!is_valid_memory(dev, src, n) || !is_valid_memory(dev, dst, n)) {
+        GOMP_PLUGIN_error("Memory bounds violation during device to host copy\n");
         return false;
     }
 
@@ -384,6 +402,11 @@ GOMP_OFFLOAD_host2dev(int device, void *dst, const void *src, size_t n)
     simulated_device *dev = &devices[device];
     if (!dev->initialized) {
         GOMP_PLUGIN_error("Attempt to copy to an uninitialized device %d\n", device);
+        return false;
+    }
+
+    if (!is_valid_memory(dev, dst, n) || !is_valid_memory(dev, src, n)) {
+        GOMP_PLUGIN_error("Memory bounds violation during host to device copy\n");
         return false;
     }
 
