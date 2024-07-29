@@ -20,6 +20,7 @@
 #include "oacc-int.h"
 
 #define MAX_DEVICES 1
+#define MAX_ALLOCATIONS 100
 #define HOST_PROCESS_DEBUG(...) DEBUG_LOG ("HOST_PROCESS debug: ", __VA_ARGS__)
 
 const char *
@@ -46,14 +47,23 @@ GOMP_OFFLOAD_get_num_devices (unsigned int omp_requires_mask)
     return 1;
 }
 
+// struct to track allocations
+typedef struct {
+    void* ptr;
+    size_t size;
+} allocation;
+
+
 // struct to store device information
 // I thought pthread_mutex_t can be important if multiple threads
 // will try to initialize, modify, or interact with the simulated device concurrently.
-struct simulated_device {
+typedef struct {
     bool initialized;
     pthread_mutex_t lock;
     pid_t process_id;
-};
+    allocation allocations[MAX_ALLOCATIONS];
+} simulated_device;
+
 
 // Assuming i have an array of devices
 simulated_device devices[MAX_DEVICES];
@@ -150,12 +160,12 @@ GOMP_OFFLOAD_version (void)
     return GOMP_VERSION;
 }
 
-struct host_process_image_desc {
+typedef struct {
     void *code;         // Pointer to the compiled code
     size_t code_size;   // Size of the code
     void **data;        // Pointers to any relevant data
     size_t data_size;   // Size of the data
-};
+} host_process_image_desc;
 
 // Do i understand correctly that "Reverse offloading" refers to the scenario where
 // functions that are normally executed on the device are instead executed on the host ?
@@ -173,7 +183,7 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
     snprintf(shm_name, sizeof(shm_name), "/my_shm_%d", n);
 
     // Open shared memory object, where
-    // "/my_shm" -- name of the shared memory object,
+    // "/my_shm_n" -- name of the shared memory object for device № n,
     // "O_CREAT | O_RDWR" -- shared memory object should be created if it does not already exist and it should be opened for reading and writing
     // "0666" -- file can be read and written by the user, group, and others
     int fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
@@ -275,6 +285,24 @@ GOMP_OFFLOAD_alloc(int n, size_t size)
         return NULL;
     }
 
+    pthread_mutex_lock(&device->lock);
+    int i;
+    for (i = 0; i < MAX_ALLOCATIONS; i++) {
+        if (device->allocations[i].ptr == NULL) {
+            device->allocations[i].ptr = ptr;
+            device->allocations[i].size = size;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&device->lock);
+
+    // Here we check if the allocations array was full
+    if (i == MAX_ALLOCATIONS) {
+        GOMP_PLUGIN_error("Exceeded maximum allocation limit on device %d\n", n);
+        munmap(ptr, size); // Cleanup newly allocated memory
+        return NULL;
+    }
+
     return ptr;
 }
 
@@ -296,10 +324,29 @@ GOMP_OFFLOAD_free(int n, void *ptr /*, size_t size*/)
         return false;
     }
 
-//    if (munmap(ptr, size) == -1) {
-//        GOMP_PLUGIN_error("Memory deallocation failed");
-//        return false;
-//    }
+    pthread_mutex_lock(&device->lock);
+    bool found = false;
+    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
+        if (device->allocations[i].ptr == ptr) {
+            // Free the memory using the recorded size
+            if (munmap(ptr, device->allocations[i].size) == -1) {
+                GOMP_PLUGIN_error("Memory deallocation failed\n");
+                pthread_mutex_unlock(&device->lock);
+                return false;
+            }
+
+            device->allocations[i].ptr = NULL;
+            device->allocations[i].size = 0;
+            found = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&device->lock);
+
+    if (!found) {
+        GOMP_PLUGIN_error("Pointer not recognized or already freed for device %d\n", n);
+        return false;
+    }
 
     return true;
 }
