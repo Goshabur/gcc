@@ -318,8 +318,8 @@ GOMP_OFFLOAD_alloc(int n, size_t size)
 
 
 
-// Here i have a problem... i need to have additional parameter -- size,
-// to understand how much data to clear
+// Here i have a problem... i need to have additional parameter -- size, to understand how much data to clear
+// Solution: maintain map of {ptr, size} to track all allocations
 bool
 GOMP_OFFLOAD_free(int n, void *ptr /*, size_t size*/)
 {
