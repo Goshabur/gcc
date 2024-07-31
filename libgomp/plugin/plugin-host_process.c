@@ -1,16 +1,19 @@
 /* Host process plugin */
 
-#include <stdlib.h>
-#include <signal.h>
 #include <sys/wait.h>
 #include <sys/types.h>
-#include <unistd.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
 #include <pthread.h>
 #include <cstdio>
+#include <stdio.h>
 
 #include "config.h"
 #include "symcat.h"
@@ -47,6 +50,13 @@ GOMP_OFFLOAD_get_num_devices (unsigned int omp_requires_mask)
     return 1;
 }
 
+void
+check_device_validity(int n)
+{
+
+}
+
+
 // struct to track allocations
 typedef struct {
     void* ptr;
@@ -61,12 +71,202 @@ typedef struct {
     bool initialized;
     pthread_mutex_t lock;
     pid_t process_id;
+    int socket_fd;
     allocation allocations[MAX_ALLOCATIONS];
+    void *image_memory;
+    size_t image_size;
 } simulated_device;
-
 
 // Assuming i have an array of devices
 simulated_device devices[MAX_DEVICES];
+
+
+void
+handle_alloc(int n, size_t size)
+{
+    simulated_device *device = &devices[n];
+    int index = -1;
+
+    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
+        if (device->allocations[i].ptr == NULL) {
+            index = i;
+            break;
+        }
+    }
+
+    void *ptr = NULL;
+    if (index != -1) {
+        ptr = malloc(size);
+        if (ptr) {
+            device->allocations[index].ptr = ptr;
+            device->allocations[index].size = size;
+        }
+    }
+
+    send(device->socket_fd, &ptr, sizeof(ptr), 0);
+}
+
+
+void
+handle_free(int n, void *ptr)
+{
+    simulated_device *device = &devices[n];
+    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
+        if (device->allocations[i].ptr == ptr) {
+            free(ptr);
+            device->allocations[i].ptr = NULL;
+            device->allocations[i].size = 0;
+            break;
+        }
+    }
+}
+
+void
+handle_load_image(int n)
+{
+    simulated_device *device = &devices[n];
+    size_t total_size;
+
+    int bytes_received = recv(device->socket_fd, &total_size, sizeof(total_size), 0);
+    if (bytes_received < sizeof(total_size)) {
+        GOMP_PLUGIN_error("Failed to receive total data size\n");
+        return;
+    }
+
+    void *image_memory = malloc(total_size);
+    if (!image_memory) {
+        GOMP_PLUGIN_error("Failed to allocate memory for image\n");
+        return;
+    }
+
+    size_t received = 0;
+    while (received < total_size) {
+        char *buffer = ((char *)image_memory) + received;
+        size_t to_receive = total_size - received;
+        bytes_received = recv(device->socket_fd, buffer, to_receive, 0);
+        if (bytes_received <= 0) {
+            GOMP_PLUGIN_error("Failed to receive image data\n");
+            free(image_memory);
+            return;
+        }
+        received += bytes_received;
+    }
+
+    // Optionally, but i decided to store the image memory and size for possible later reference
+    // ***And yeah, here i assume that a single image load per device***
+    device->image_memory = image_memory;
+    device->image_size = total_size;
+
+    send(device->socket_fd, &image_memory, sizeof(image_memory), 0);
+}
+
+void
+handle_unload_image(int n)
+{
+    simulated_device *device = &devices[n];
+
+    if (device->image_memory == NULL) {
+        GOMP_PLUGIN_error("No image is currently loaded on device %d\n", n);
+        char response[256] = "ERROR No image loaded";
+        send(device->socket_fd, response, strlen(response), 0);
+        return;
+    }
+
+    free(device->image_memory);
+    device->image_memory = NULL;
+    device->image_size = 0;
+
+    HOST_PROCESS_DEBUG("Image successfully unloaded from device %d\n", n);
+
+    char response[256] = "OK Image unloaded";
+    send(device->socket_fd, response, strlen(response), 0);
+}
+
+void
+handle_host2dev(int n, const char *command_details)
+{
+    simulated_device *device = &devices[n];
+    void *dst;
+    size_t size;
+
+    int parsed = sscanf(command_details, "%p %zu", &dst, &size);
+    if (parsed != 2) {
+        GOMP_PLUGIN_error("Failed to parse HOST_TO_DEV command\n");
+        send(device->socket_fd, "ERROR", 5, 0);
+        return;
+    }
+
+    char *data = malloc(size);
+    if (!data) {
+        GOMP_PLUGIN_error("Memory allocation failed for data transfer\n");
+        send(device->socket_fd, "ERROR", 5, 0);
+        return;
+    }
+
+    int bytes_received = recv(device->socket_fd, data, size, 0);
+    if (bytes_received < (int)size) {
+        GOMP_PLUGIN_error("Failed to receive all data\n");
+        free(data);
+        send(device->socket_fd, "ERROR", 5, 0);
+        return;
+    }
+
+    memcpy(dst, data, size);
+    free(data);
+    send(device->socket_fd, "OK", 2, 0);
+}
+
+void
+handle_dev2host(int n, const char *command_details)
+{
+    simulated_device *device = &devices[n];
+    void *src;
+    size_t size;
+
+    int parsed = sscanf(command_details, "%p %zu", &src, &size);
+    if (parsed != 2) {
+        GOMP_PLUGIN_error("Failed to parse DEV_TO_HOST command");
+        size_t error_indicator = 0; // Here i want to send a specific error code
+        send(socket_fd, &error_indicator, sizeof(size_t), 0);
+        return;
+    }
+
+    // Can i assume here that src points to valid memory in this process ?
+    if (send(device->socket_fd, src, size, 0) < size) {
+        GOMP_PLUGIN_error("Failed to send all data to host");
+    }
+}
+
+void
+child_process(int n)
+{
+    simulated_device *device = &devices[n];
+    char buffer[1024];
+
+    while (1) {
+        int bytes_received = recv(device->socket_fd, buffer, sizeof(buffer), 0);
+        if (bytes_received <= 0) break;
+
+        buffer[bytes_received] = '\0';
+        if (strncmp(buffer, "ALLOC", 5) == 0) {
+            size_t size = atoi(buffer + 6);
+            handle_alloc(n, size);
+        } else if (strncmp(buffer, "FREE", 4) == 0) {
+            void *ptr;
+            sscanf(buffer + 5, "%p", &ptr);
+            handle_free(n, ptr);
+        } else if (strcmp(buffer, "LOAD_IMAGE") == 0) {
+            handle_load_image(n);
+        } else if (strcmp(buffer, "UNLOAD_IMAGE") == 0) {
+            handle_unload_image(n);
+        } else if (strncmp(buffer, "HOST_TO_DEV", 11) == 0) {
+            handle_host2dev(n, buffer + 12);
+        } else if (strncmp(buffer, "DEV_TO_HOST", 11) == 0) {
+            handle_dev2host(n, buffer + 12);
+        }
+    }
+    close(device->socket_fd);
+}
 
 bool
 GOMP_OFFLOAD_init_device(int n)
@@ -77,9 +277,8 @@ GOMP_OFFLOAD_init_device(int n)
     }
 
     simulated_device *device = &devices[n];
-
     if (device->initialized) {
-        return true; // Already initialized
+        return true;
     }
 
     // Initialize a mutex for this device
@@ -88,24 +287,32 @@ GOMP_OFFLOAD_init_device(int n)
         return false;
     }
 
-    // Fork a new process to simulate the device
+    int sockets[2];  // Socket pair
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0) {
+        GOMP_PLUGIN_error("Failed to create socket pair");
+        pthread_mutex_destroy(&device->lock);
+        return false;
+    }
+
     pid_t pid = fork();
     if (pid == -1) {
         GOMP_PLUGIN_error("Failed to fork a simulated device process");
         pthread_mutex_destroy(&device->lock);
+        close(sockets[0]);
+        close(sockets[1]);
         return false;
     } else if (pid == 0) {
-        // Here we are in the child process and we need to setup the environment for simulation, initialize communication channels, etc.
-//        while (true) {
-//            pause();
-//        }
-//        _exit(0);
+        close(sockets[0]);
+        child_process(n);  // function for child process
+        _exit(0);
     }
 
     // Parent process
+    close(sockets[1]);
+    device->socket_fd = sockets[0];  // here i save the parent's socket descriptor
     device->process_id = pid;
     device->initialized = true;
-    HOST_PROCESS_DEBUG("Simulated device %d initialized with process ID %d\n", n, pid);
+    HOST_PROCESS_DEBUG("Simulated device %d initialized with process ID %d and socket FD %d\n", n, pid, sockets[0]);
 
     return true;
 }
@@ -146,6 +353,7 @@ GOMP_OFFLOAD_fini_device(int n)
     }
 
     // Current device is marked uninitialized
+    close(device->socket_fd)
     device->initialized = false;
     device->process_id = 0;
 
@@ -176,63 +384,70 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
                             uint64_t **rev_fn_table,
                             uint64_t *host_ind_fn_table)
 {
+    if (n < 0 || n >= MAX_DEVICES) {
+        GOMP_PLUGIN_error("Invalid device number %d\n", n);
+        return -1;
+    }
+
+    simulated_device *device = &devices[n];
+    if (!device->initialized || device->socket_fd < 0) {
+        GOMP_PLUGIN_error("Device %d not initialized or socket not valid\n", n);
+        return -1;
+    }
+
     host_process_image_desc *img = (host_process_image_desc *)target_data;
-
-    // Here we create a unique name for the shared memory object with the device number
-    char shm_name[256];
-    snprintf(shm_name, sizeof(shm_name), "/my_shm_%d", n);
-
-    // Open shared memory object, where
-    // "/my_shm_n" -- name of the shared memory object for device № n,
-    // "O_CREAT | O_RDWR" -- shared memory object should be created if it does not already exist and it should be opened for reading and writing
-    // "0666" -- file can be read and written by the user, group, and others
-    int fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
-    if (fd == -1) {
-        GOMP_PLUGIN_error("shm_open");
-        return -1;
-    }
-
-    // Here we calculate the total size needed in shared memory
-    // and resize the shared memory object pointed to by the file descriptor fd to a specified length
     size_t total_size = img->code_size + img->data_size;
-    if (ftruncate(fd, total_size) == -1) {
-        GOMP_PLUGIN_error("ftruncate");
-        close(fd);
-        shm_unlink(shm_name);
+
+    pthread_mutex_lock(&device->lock);
+    char command[256];
+    sprintf(command, "LOAD_IMAGE", ptr);
+    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send load command\n");
+        pthread_mutex_unlock(&device->lock);
+        return false;
+    }
+
+    // i want to send the size of the code+data first
+    if (send(device->socket_fd, &total_size, sizeof(total_size), 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send data size\n");
+        pthread_mutex_unlock(&device->lock);
         return -1;
     }
 
-    // Here I map the shared memory object represented by the file descriptor fd into the process's virtual address space
-    void *shm_addr = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (shm_addr == MAP_FAILED) {
-        GOMP_PLUGIN_error("mmap");
-        close(fd);
-        shm_unlink(shm_name);
+    // Send the code
+    if (send(device->socket_fd, img->code, img->code_size, 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send code data\n");
+        pthread_mutex_unlock(&device->lock);
         return -1;
     }
 
-    // Copy the code and data into the shared memory
-    memcpy(shm_addr, img->code, img->code_size);
-    memcpy((char *)shm_addr + img->code_size, img->data, img->data_size);
+    // Send the data
+    if (send(device->socket_fd, img->data, img->data_size, 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send image data\n");
+        pthread_mutex_unlock(&device->lock);
+        return -1;
+    }
 
     // Allocate the target_table with 2 entries: one for code, one for data
     *target_table = malloc(2 * sizeof(addr_pair));
     if (*target_table == NULL) {
         GOMP_PLUGIN_error("malloc failed");
-        munmap(shm_addr, total_size);
-        close(fd);
-        shm_unlink(shm_name);
+        return -1;
+    }
+
+    void *response_address;
+    int recv_size = recv(device->socket_fd, &response_address, sizeof(response_address), 0);
+    if (recv_size < sizeof(response_address)) {
+        GOMP_PLUGIN_error("Failed to receive response from child process\n");
+        pthread_mutex_unlock(&device->lock);
         return -1;
     }
 
     // Set up the address pairs for code and data
-    (*target_table)[0].start = (uintptr_t) shm_addr;
-    (*target_table)[0].end = (uintptr_t) shm_addr + img->code_size;
-    (*target_table)[1].start = (uintptr_t) (shm_addr + img->code_size);
-    (*target_table)[1].end = (uintptr_t) (shm_addr + img->code_size + img->data_size);
-
-    // Clean up the file descriptor
-    close(fd);
+    (*target_table)[0].start = (uintptr_t) response_address;
+    (*target_table)[0].end = (uintptr_t) response_address + img->code_size;
+    (*target_table)[1].start = (uintptr_t) (response_address + img->code_size);
+    (*target_table)[1].end = (uintptr_t) (response_address + img->code_size + img->data_size);
 
     return 0;
 }
@@ -248,31 +463,32 @@ GOMP_OFFLOAD_unload_image(int n, unsigned version, const void *target_data)
 //        return false;
 //    }
 
-    addr_pair *pairs = (addr_pair *) target_data;
-    void *shm_addr = (void *) pairs[0].start;
-    size_t total_size = pairs[1].end - pairs[0].start;
-
-    // Unmap the shared memory
-    if (munmap(shm_addr, total_size) == -1) {
-        GOMP_PLUGIN_error("munmap failed: %s", strerror(errno));
+    if (n < 0 || n >= MAX_DEVICES) {
+        GOMP_PLUGIN_error("Invalid device number %d\n", n);
         return false;
     }
 
-    // Optionally, i can remove the shared memory object name with shm_unlink("/my_shm");
-    // But i need to be sure no other process needs it
-    char shm_name[256];
-    snprintf(shm_name, sizeof(shm_name), "/my_shm_%d", n);
-    if (shm_unlink(shm_name) == -1) {
-        GOMP_PLUGIN_error("shm_unlink failed: %s", strerror(errno));
+    simulated_device *device = &devices[n];
+    if (!device->initialized || device->socket_fd < 0) {
+        GOMP_PLUGIN_error("Device %d not initialized or socket not valid\n", n);
         return false;
     }
 
-    free(pairs);
+    char command[256] = "UNLOAD_IMAGE";
+    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send unload command\n");
+        return false;
+    }
+
+    char response[1024];
+    int bytes_received = recv(device->socket_fd, response, sizeof(response), 0);
+    if (bytes_received <= 0) break;
+    HOST_PROCESS_DEBUG(response);
 
     return true;
 }
 
-
+// What pointer should 'GOMP_OFFLOAD_alloc' return, if i am allocating in another address space ?..
 void *
 GOMP_OFFLOAD_alloc(int n, size_t size)
 {
@@ -282,46 +498,38 @@ GOMP_OFFLOAD_alloc(int n, size_t size)
     }
 
     simulated_device *device = &devices[n];
-    if (!device->initialized) {
+    if (!device->initialized || device->socket_fd < 0) {
         GOMP_PLUGIN_error("Attempt to allocate memory on uninitialized device %d\n", n);
         return NULL;
     }
 
-    // Here i allocate anonymous memory, because (in my understanding) in 'GOMP_OFFLOAD_load_image' i allocate memory that i am intending to share
-    // and in 'GOMP_OFFLOAD_alloc' i allocate memory that is supposed to be only for this process.
-    void *ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (ptr == MAP_FAILED) {
-        GOMP_PLUGIN_error("Memory allocation failed");
-        return NULL;
-    }
-
     pthread_mutex_lock(&device->lock);
-    int i;
-    for (i = 0; i < MAX_ALLOCATIONS; i++) {
-        if (device->allocations[i].ptr == NULL) {
-            device->allocations[i].ptr = ptr;
-            device->allocations[i].size = size;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&device->lock);
 
-    // Here we check if the allocations array was full
-    if (i == MAX_ALLOCATIONS) {
-        GOMP_PLUGIN_error("Exceeded maximum allocation limit on device %d\n", n);
-        munmap(ptr, size); // Cleanup newly allocated memory
+    // Here i construct and send an allocation command
+    char command[256];
+    sprintf(command, "ALLOC %zu", size);
+    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send allocation command\n");
+        pthread_mutex_unlock(&device->lock);
         return NULL;
     }
 
-    return ptr;
+    // Seems like here i am expecting a response with the address of the allocated memory
+    void *ptr;
+    int recv_size = recv(device->socket_fd, &ptr, sizeof(ptr), 0);
+    if (recv_size < sizeof(ptr)) {
+        GOMP_PLUGIN_error("Failed to receive allocation response or allocation failed\n");
+        pthread_mutex_unlock(&device->lock);
+        return NULL;
+    }
+
+    pthread_mutex_unlock(&device->lock);
+    return ptr; //// in process 'A' i am returning pointer from the address space of another process...
 }
 
 
-
-// Here i have a problem... i need to have additional parameter -- size, to understand how much data to clear
-// Solution: maintain map of {ptr, size} to track all allocations
 bool
-GOMP_OFFLOAD_free(int n, void *ptr /*, size_t size*/)
+GOMP_OFFLOAD_free(int n, void *ptr)
 {
     if (n < 0 || n >= MAX_DEVICES) {
         GOMP_PLUGIN_error ("Invalid device number %d\n", n);
@@ -329,7 +537,7 @@ GOMP_OFFLOAD_free(int n, void *ptr /*, size_t size*/)
     }
 
     simulated_device *device = &devices[n];
-    if (!device->initialized) {
+    if (!device->initialized || device->socket_fd < 0) {
         GOMP_PLUGIN_error("Attempt to free memory on uninitialized device %d\n", n);
         return false;
     }
@@ -338,15 +546,14 @@ GOMP_OFFLOAD_free(int n, void *ptr /*, size_t size*/)
     bool found = false;
     for (int i = 0; i < MAX_ALLOCATIONS; i++) {
         if (device->allocations[i].ptr == ptr) {
-            // Free the memory using the recorded size
-            if (munmap(ptr, device->allocations[i].size) == -1) {
-                GOMP_PLUGIN_error("Memory deallocation failed\n");
+            char command[256];
+            sprintf(command, "FREE %p", ptr);
+            if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+                GOMP_PLUGIN_error("Failed to send free command\n");
                 pthread_mutex_unlock(&device->lock);
                 return false;
             }
 
-            device->allocations[i].ptr = NULL;
-            device->allocations[i].size = 0;
             found = true;
             break;
         }
@@ -379,7 +586,7 @@ bool
 GOMP_OFFLOAD_dev2host(int device, void *dst, const void *src, size_t n)
 {
     if (device < 0 || device >= MAX_DEVICES) {
-        GOMP_PLUGIN_error ("Invalid device number %d\n", n);
+        GOMP_PLUGIN_error ("Invalid device number %zu\n", n);
         return false;
     }
 
@@ -389,41 +596,68 @@ GOMP_OFFLOAD_dev2host(int device, void *dst, const void *src, size_t n)
         return false;
     }
 
-    if (!is_valid_memory(dev, src, n) || !is_valid_memory(dev, dst, n)) {
-        GOMP_PLUGIN_error("Memory bounds violation during device to host copy\n");
+    char command[64];
+    snprintf(command, sizeof(command), "DEV_TO_HOST %p %zu", src, n);
+    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send DEV_TO_HOST command to device");
         return false;
     }
 
-    // Perform the memory copy
-    memcpy(dst, src, n);
-    HOST_PROCESS_DEBUG("Copying %zu bytes from device %d (%p) to host (%p)\n", n, device, src, dst);
+    // Receive the data
+    int bytes_received = recv(dev->socket_fd, dst, n, 0);
+    if (bytes_received < (int)n) {
+        GOMP_PLUGIN_error("Failed to receive all data from device");
+        return false;
+    }
+
     return true;
 }
 
 
 bool
-GOMP_OFFLOAD_host2dev(int device, void *dst, const void *src, size_t n)
+GOMP_OFFLOAD_host2dev(int n, void *dst, const void *src, size_t size)
 {
-    if (device < 0 || device >= MAX_DEVICES) {
-        GOMP_PLUGIN_error ("Invalid device number %d\n", n);
+    if (n < 0 || n >= MAX_DEVICES) {
+        GOMP_PLUGIN_error("Invalid device number %d", n);
         return false;
     }
 
-    simulated_device *dev = &devices[device];
-    if (!dev->initialized) {
-        GOMP_PLUGIN_error("Attempt to copy to an uninitialized device %d\n", device);
+    simulated_device *device = &devices[n];
+    if (!device->initialized) {
+        GOMP_PLUGIN_error("Attempt to copy to an uninitialized device %d", n);
         return false;
     }
 
-    if (!is_valid_memory(dev, dst, n) || !is_valid_memory(dev, src, n)) {
-        GOMP_PLUGIN_error("Memory bounds violation during host to device copy\n");
+    char command[64];
+    snprintf(command, sizeof(command), "HOST_TO_DEV %p %zu", dst, size);
+    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send HOST_TO_DEV command to device");
         return false;
     }
 
-    // Perform the memory copy
-    memcpy(dst, src, n);
-    HOST_PROCESS_DEBUG("Copying %zu bytes from host (%p) to device %d (%p)\n", n, src, device, dst);
+    if (send(device->socket_fd, src, size, 0) < 0) {
+        GOMP_PLUGIN_error("Failed to send data to device");
+        return false;
+    }
+
+    char response[32];
+    if (recv(device->socket_fd, response, sizeof(response), 0) <= 0) {
+        GOMP_PLUGIN_error("Failed to receive confirmation from device");
+        return false;
+    }
+
+    if (strcmp(response, "OK") != 0) {
+        GOMP_PLUGIN_error("Device reported an error during data transfer");
+        return false;
+    }
+
     return true;
+}
+
+void
+GOMP_OFFLOAD_run (int n, void *fn_ptr, void *vars, void **args)
+{
+
 }
 
 
