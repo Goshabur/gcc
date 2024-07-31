@@ -12,7 +12,6 @@
 #include <fcntl.h>
 #include <string.h>
 #include <pthread.h>
-#include <cstdio>
 #include <stdio.h>
 
 #include "config.h"
@@ -24,7 +23,7 @@
 
 #define MAX_DEVICES 1
 #define MAX_ALLOCATIONS 100
-#define HOST_PROCESS_DEBUG(...) DEBUG_LOG ("HOST_PROCESS debug: ", __VA_ARGS__)
+//#define HOST_PROCESS_DEBUG(...) GOMP_PLUGIN_debug("HOST_PROCESS debug: ", __VA_ARGS__)
 
 const char *
 GOMP_OFFLOAD_get_name (void)
@@ -167,7 +166,7 @@ handle_unload_image(int n)
 
     if (device->image_memory == NULL) {
         GOMP_PLUGIN_error("No image is currently loaded on device %d\n", n);
-        char response[256] = "ERROR No image loaded";
+        char response[256] = "ERROR, No image loaded";
         send(device->socket_fd, response, strlen(response), 0);
         return;
     }
@@ -176,9 +175,9 @@ handle_unload_image(int n)
     device->image_memory = NULL;
     device->image_size = 0;
 
-    HOST_PROCESS_DEBUG("Image successfully unloaded from device %d\n", n);
+    GOMP_PLUGIN_debug(0, "Image successfully unloaded from device %d\n", n);
 
-    char response[256] = "OK Image unloaded";
+    char response[256] = "OK, Image unloaded";
     send(device->socket_fd, response, strlen(response), 0);
 }
 
@@ -227,7 +226,7 @@ handle_dev2host(int n, const char *command_details)
     if (parsed != 2) {
         GOMP_PLUGIN_error("Failed to parse DEV_TO_HOST command");
         size_t error_indicator = 0; // Here i want to send a specific error code
-        send(socket_fd, &error_indicator, sizeof(size_t), 0);
+        send(device->socket_fd, &error_indicator, sizeof(size_t), 0);
         return;
     }
 
@@ -312,7 +311,7 @@ GOMP_OFFLOAD_init_device(int n)
     device->socket_fd = sockets[0];  // here i save the parent's socket descriptor
     device->process_id = pid;
     device->initialized = true;
-    HOST_PROCESS_DEBUG("Simulated device %d initialized with process ID %d and socket FD %d\n", n, pid, sockets[0]);
+    GOMP_PLUGIN_debug(0, "Simulated device %d initialized with process ID %d and socket FD %d\n", n, pid, sockets[0]);
 
     return true;
 }
@@ -353,7 +352,7 @@ GOMP_OFFLOAD_fini_device(int n)
     }
 
     // Current device is marked uninitialized
-    close(device->socket_fd)
+    close(device->socket_fd);
     device->initialized = false;
     device->process_id = 0;
 
@@ -399,8 +398,7 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
     size_t total_size = img->code_size + img->data_size;
 
     pthread_mutex_lock(&device->lock);
-    char command[256];
-    sprintf(command, "LOAD_IMAGE", ptr);
+    char command[256] = "LOAD_IMAGE";
     if (send(device->socket_fd, command, strlen(command), 0) < 0) {
         GOMP_PLUGIN_error("Failed to send load command\n");
         pthread_mutex_unlock(&device->lock);
@@ -429,7 +427,7 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
     }
 
     // Allocate the target_table with 2 entries: one for code, one for data
-    *target_table = malloc(2 * sizeof(addr_pair));
+    *target_table = malloc(2 * sizeof(struct addr_pair));
     if (*target_table == NULL) {
         GOMP_PLUGIN_error("malloc failed");
         return -1;
@@ -480,10 +478,13 @@ GOMP_OFFLOAD_unload_image(int n, unsigned version, const void *target_data)
         return false;
     }
 
-    char response[1024];
+    char response[128];
     int bytes_received = recv(device->socket_fd, response, sizeof(response), 0);
-    if (bytes_received <= 0) break;
-    HOST_PROCESS_DEBUG(response);
+    if (bytes_received <= 0){
+        GOMP_PLUGIN_error("Failed to receive confirmation from device about unload operation");
+        return false;
+    }
+    GOMP_PLUGIN_debug(0, "%s", response);
 
     return true;
 }
@@ -583,29 +584,29 @@ is_valid_memory(simulated_device *dev, void *ptr, size_t size)
 
 
 bool
-GOMP_OFFLOAD_dev2host(int device, void *dst, const void *src, size_t n)
+GOMP_OFFLOAD_dev2host(int n, void *dst, const void *src, size_t size)
 {
-    if (device < 0 || device >= MAX_DEVICES) {
-        GOMP_PLUGIN_error ("Invalid device number %zu\n", n);
+    if (n < 0 || n >= MAX_DEVICES) {
+        GOMP_PLUGIN_error ("Invalid device number %d\n", n);
         return false;
     }
 
-    simulated_device *dev = &devices[device];
-    if (!dev->initialized) {
-        GOMP_PLUGIN_error("Attempt to copy from an uninitialized device %d\n", device);
+    simulated_device *device = &devices[n];
+    if (!device->initialized) {
+        GOMP_PLUGIN_error("Attempt to copy from an uninitialized device %d\n", n);
         return false;
     }
 
     char command[64];
-    snprintf(command, sizeof(command), "DEV_TO_HOST %p %zu", src, n);
+    snprintf(command, sizeof(command), "DEV_TO_HOST %p %zu", src, size);
     if (send(device->socket_fd, command, strlen(command), 0) < 0) {
         GOMP_PLUGIN_error("Failed to send DEV_TO_HOST command to device");
         return false;
     }
 
     // Receive the data
-    int bytes_received = recv(dev->socket_fd, dst, n, 0);
-    if (bytes_received < (int)n) {
+    int bytes_received = recv(device->socket_fd, dst, size, 0);
+    if (bytes_received < (int)size) {
         GOMP_PLUGIN_error("Failed to receive all data from device");
         return false;
     }
@@ -642,7 +643,7 @@ GOMP_OFFLOAD_host2dev(int n, void *dst, const void *src, size_t size)
 
     char response[32];
     if (recv(device->socket_fd, response, sizeof(response), 0) <= 0) {
-        GOMP_PLUGIN_error("Failed to receive confirmation from device");
+        GOMP_PLUGIN_error("Failed to receive confirmation from device about successful copy from host to device");
         return false;
     }
 
