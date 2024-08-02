@@ -1037,6 +1037,10 @@ compile_images_for_offload_targets (unsigned in_argc, char *in_argv[],
   offload_names = XCNEWVEC (char *, num_targets + 1);
   for (unsigned i = 0; i < num_targets; i++)
     {
+      //TODO 'lto-wrapper: fatal error: could not find accel/host_process/mkoffload in [...]'
+      if (!strcmp (names[i], "host_process"))
+	continue;
+
       if (!compile_offload_image (names[i], compiler_path, in_argc, in_argv,
 				  compiler_opts, linker_opts,
 				  &offload_names[next_name_entry]))
