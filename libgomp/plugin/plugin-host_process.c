@@ -50,31 +50,6 @@ GOMP_OFFLOAD_get_num_devices (unsigned int omp_requires_mask)
 }
 
 bool
-wrong_device_number(int n)
-{
-    if (n < 0 || n >= MAX_DEVICES) {
-        GOMP_PLUGIN_error ("Invalid device number %d\n", n);
-        return true;
-    }
-    return false;
-}
-
-bool
-check_device_validity(int n)
-{
-    if (wrong_device_number(n)) {
-        return false;
-    }
-
-    simulated_device *device = &devices[n];
-    if (!device->initialized || device->socket_fd < 0) {
-        GOMP_PLUGIN_error("Device %d not initialized or socket not valid\n", n);
-        return false;
-    }
-    return true;
-}
-
-bool
 call_function_with_args(void *fn_ptr, void *vars)
 {
     return false;
@@ -103,6 +78,32 @@ typedef struct {
 
 // Assuming i have an array of devices
 simulated_device devices[MAX_DEVICES];
+
+
+bool
+wrong_device_number(int n)
+{
+    if (n < 0 || n >= MAX_DEVICES) {
+        GOMP_PLUGIN_error ("Invalid device number %d\n", n);
+        return true;
+    }
+    return false;
+}
+
+bool
+check_device_validity(int n)
+{
+    if (wrong_device_number(n)) {
+        return false;
+    }
+
+    simulated_device *device = &devices[n];
+    if (!device->initialized || device->socket_fd < 0) {
+        GOMP_PLUGIN_error("Device %d not initialized or socket not valid\n", n);
+        return false;
+    }
+    return true;
+}
 
 
 void
