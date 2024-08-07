@@ -2,6 +2,12 @@
 #include <gomp-constants.h>
 
 /* static */ int
+device_arch_host_process (void)
+{
+  return GOMP_DEVICE_HOST_PROCESS;
+}
+
+/* static */ int
 device_arch_nvptx (void)
 {
   return GOMP_DEVICE_NVIDIA_PTX;
@@ -13,6 +19,7 @@ device_arch_gcn (void)
   return GOMP_DEVICE_GCN;
 }
 
+#pragma omp declare variant (device_arch_host_process) match(construct={target},device={arch(host_process)})
 #pragma omp declare variant (device_arch_nvptx) match(construct={target},device={arch(nvptx)})
 #pragma omp declare variant (device_arch_gcn) match(construct={target},device={arch(gcn)})
 /* static */ int
@@ -29,6 +36,12 @@ on_device_arch (int d)
   d_cur = device_arch ();
 
   return d_cur == d;
+}
+
+int
+on_device_arch_host_process ()
+{
+  return on_device_arch (GOMP_DEVICE_HOST_PROCESS);
 }
 
 int

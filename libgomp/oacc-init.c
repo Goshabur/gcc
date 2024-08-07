@@ -120,6 +120,7 @@ name_of_acc_device_t (enum acc_device_t type)
     case acc_device_none: return "none";
     case acc_device_default: return "default";
     case acc_device_host: return "host";
+    case acc_device_host_process: return "host_process";
     case acc_device_not_host: return "not_host";
     case acc_device_nvidia: return "nvidia";
     case acc_device_radeon: return "radeon";
