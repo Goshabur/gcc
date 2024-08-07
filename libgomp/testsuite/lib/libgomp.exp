@@ -360,6 +360,9 @@ proc offload_target_to_openacc_device_type { offload_target } {
 	disable {
 	    return "host"
 	}
+	host_process {
+	    return "host_process"
+	}
 	nvptx* {
 	    return "nvidia"
 	}
@@ -416,6 +419,11 @@ proc check_effective_target_offload_target_any { } {
     return [libgomp_check_effective_target_offload_target ""]
 }
 
+# Return 1 if compiling for host process offloading.
+proc check_effective_target_offload_target_host_process { } {
+    return [libgomp_check_effective_target_offload_target "host_process"]
+}
+
 # Return 1 if compiling for offload target nvptx.
 proc check_effective_target_offload_target_nvptx { } {
     return [libgomp_check_effective_target_offload_target "nvptx"]
@@ -466,6 +474,18 @@ proc check_effective_target_offload_device_shared_as { } {
     } ]
 }
 
+# Return 1 if using host process ofloading.
+proc check_effective_target_offload_device_host_process { } {
+    return [check_runtime_nocache offload_device_host_process {
+      #include <omp.h>
+      #include "testsuite/libgomp.c-c++-common/on_device_arch.h"
+      int main ()
+	{
+	  return !on_device_arch_host_process ();
+	}
+    } ]
+}
+
 # Return 1 if using nvptx offload device.
 proc check_effective_target_offload_device_nvptx { } {
     return [check_runtime_nocache offload_device_nvptx {
@@ -490,6 +510,34 @@ proc check_effective_target_offload_device_gcn { } {
     } ]
 }
 
+# Return 1 if the OpenACC 'host' device type is selected.
+
+proc check_effective_target_openacc_host_selected { } {
+    global openacc_device_type
+    return [string match "host" $openacc_device_type]
+}
+
+# Return 1 if the OpenACC 'host_process' device type is available.
+
+proc check_effective_target_openacc_host_process_accel_present { } {
+    return [check_runtime openacc_host_process_accel_present {
+	#include <openacc.h>
+	int main () {
+	return !(acc_get_num_devices (acc_device_host_process) > 0);
+	}
+    } "" ]
+}
+
+# Return 1 if the OpenACC 'host_process' device type is selected.
+
+proc check_effective_target_openacc_host_process_accel_selected { } {
+    if { ![check_effective_target_openacc_host_process_accel_present] } {
+	return 0;
+    }
+    global openacc_device_type
+    return [string match "host_process" $openacc_device_type]
+}
+
 # Return 1 if at least one Nvidia GPU is accessible.
 
 proc check_effective_target_openacc_nvidia_accel_present { } {
@@ -510,13 +558,6 @@ proc check_effective_target_openacc_nvidia_accel_selected { } {
     }
     global openacc_device_type
     return [string match "nvidia" $openacc_device_type]
-}
-
-# Return 1 if the OpenACC 'host' device type is selected.
-
-proc check_effective_target_openacc_host_selected { } {
-    global openacc_device_type
-    return [string match "host" $openacc_device_type]
 }
 
 # Return 1 if at least one AMD GPU is accessible.

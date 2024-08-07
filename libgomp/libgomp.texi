@@ -5586,6 +5586,7 @@ device type.
 Supported values in GCC (if compiled in) are
 @itemize
 @item @code{host}
+@item @code{host_process}
 @item @code{nvidia}
 @item @code{radeon}
 @end itemize
@@ -6315,9 +6316,19 @@ See also:
 The following sections present notes on the offload-target specifics
 
 @menu
+* Host Process::
 * AMD Radeon::
 * nvptx::
 @end menu
+
+
+
+@node Host Process
+@section Host Process
+
+TODO
+
+
 
 @node AMD Radeon
 @section AMD Radeon (GCN)
