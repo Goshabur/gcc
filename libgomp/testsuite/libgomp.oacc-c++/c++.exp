@@ -64,6 +64,9 @@ foreach offload_target [concat [split $offload_targets ","] "disable"] {
 	host {
 	    set acc_mem_shared 1
 	}
+	host_process {
+	    set acc_mem_shared 0
+	}
 	nvidia {
 	    if { ![check_effective_target_openacc_nvidia_accel_present] } {
 		# Don't bother; execution testing is going to FAIL.

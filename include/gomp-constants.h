@@ -264,7 +264,7 @@ enum gomp_map_kind
 #define GOMP_DEVICE_NONE		0
 #define GOMP_DEVICE_DEFAULT		1
 #define GOMP_DEVICE_HOST		2
-/* #define GOMP_DEVICE_HOST_NONSHM	3 removed.  */
+#define GOMP_DEVICE_HOST_PROCESS	3
 #define GOMP_DEVICE_NOT_HOST		4
 #define GOMP_DEVICE_NVIDIA_PTX		5
 /* #define GOMP_DEVICE_INTEL_MIC	6 removed.  */
@@ -323,6 +323,7 @@ enum gomp_map_kind
    should be incremented whenever an ABI-incompatible change is introduced
    to the plugin interface defined in libgomp/libgomp.h.  */
 #define GOMP_VERSION	3
+#define GOMP_VERSION_HOST_PROCESS 0
 #define GOMP_VERSION_NVIDIA_PTX 1
 #define GOMP_VERSION_GCN 3
 //#define GOMP_VERSION_HOST_PROCESS 0
