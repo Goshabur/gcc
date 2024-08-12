@@ -46,6 +46,7 @@ extern "C" {
 /* Type of offload target device.  Keep in sync with include/gomp-constants.h.  */
 enum offload_target_type
 {
+  OFFLOAD_TARGET_TYPE_HOST_PROCESS = 0,
   OFFLOAD_TARGET_TYPE_HOST = 2,
   /* OFFLOAD_TARGET_TYPE_HOST_NONSHM = 3 removed.  */
   OFFLOAD_TARGET_TYPE_NVIDIA_PTX = 5,

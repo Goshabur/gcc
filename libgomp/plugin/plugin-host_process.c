@@ -1,5 +1,7 @@
 /* Host process plugin */
 
+#pragma GCC optimize ("O0")
+
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -34,13 +36,13 @@ GOMP_OFFLOAD_get_name (void)
 unsigned int
 GOMP_OFFLOAD_get_caps (void)
 {
-    return GOMP_OFFLOAD_CAP_NATIVE_EXEC;
+    return GOMP_OFFLOAD_CAP_NATIVE_EXEC | GOMP_OFFLOAD_CAP_OPENMP_400;
 }
 
 int
 GOMP_OFFLOAD_get_type (void)
 {
-    return OFFLOAD_TARGET_TYPE_HOST;
+    return OFFLOAD_TARGET_TYPE_HOST_PROCESS;
 }
 
 int
@@ -463,6 +465,14 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
                             uint64_t **rev_fn_table,
                             uint64_t *host_ind_fn_table)
 {
+//    if (GOMP_VERSION_DEV (version) != GOMP_VERSION_HOST_PROCESS)
+//    {
+//        GOMP_PLUGIN_error ("Offload data incompatible with HOST_PROCESS plugin"
+//                           " (expected %u, received %u)",
+//                           GOMP_VERSION_HOST_PROCESS, GOMP_VERSION_DEV (version));
+//        return false;
+//    }
+
     if(!check_device_validity(n)) return false;
     simulated_device *device = &devices[n];
 
@@ -525,11 +535,11 @@ GOMP_OFFLOAD_load_image(int n, unsigned version, const void *target_data,
 bool
 GOMP_OFFLOAD_unload_image(int n, unsigned version, const void *target_data)
 {
-//    if (GOMP_VERSION_DEV (version) != GOMP_VERSION_HOST)
+//    if (GOMP_VERSION_DEV (version) != GOMP_VERSION_HOST_PROCESS)
 //    {
-//        GOMP_PLUGIN_error ("Offload data incompatible with GCN plugin"
+//        GOMP_PLUGIN_error ("Offload data incompatible with HOST_PROCESS plugin"
 //                           " (expected %u, received %u)",
-//                           GOMP_VERSION_GCN, GOMP_VERSION_DEV (version));
+//                           GOMP_VERSION_HOST_PROCESS, GOMP_VERSION_DEV (version));
 //        return false;
 //    }
 
