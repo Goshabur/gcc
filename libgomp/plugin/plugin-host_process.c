@@ -22,6 +22,7 @@
 #include "oacc-plugin.h"
 #include "gomp-constants.h"
 #include "oacc-int.h"
+#include <errno.h>
 
 #define MAX_DEVICES 1
 #define MAX_ALLOCATIONS 100
@@ -326,7 +327,16 @@ child_process(int n)
 
     while (1) {
         int bytes_received = recv(device->socket_fd, buffer, sizeof(buffer), 0);
-        if (bytes_received <= 0) break;
+        if (bytes_received == 0) { // connection was closed by the other side
+            break;
+        } else if (bytes_received < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;  // no data available right now, wait and try again
+            } else {
+                perror("recv failed");
+                break;
+            }
+        }
 
         buffer[bytes_received] = '\0';
         if (strncmp(buffer, "ALLOC", 5) == 0) {
@@ -350,6 +360,28 @@ child_process(int n)
     }
     close(device->socket_fd);
 }
+
+bool validate_socket_connection(int socket_fd) {
+    if (socket_fd < 0) {
+        GOMP_PLUGIN_error("Invalid socket descriptor.\n");
+        return false;
+    }
+
+    int error = 0;
+    socklen_t errlen = sizeof(error);
+    if (getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &error, &errlen) != 0) {
+        GOMP_PLUGIN_error("Socket operation failed.\n");
+        return false;
+    }
+
+    if (error != 0) {
+        GOMP_PLUGIN_error("Socket error: %s\n", strerror(error));
+        return false;
+    }
+
+    return true;
+}
+
 
 bool
 GOMP_OFFLOAD_init_device(int n)
@@ -385,6 +417,8 @@ GOMP_OFFLOAD_init_device(int n)
         return false;
     } else if (pid == 0) {
         close(sockets[0]);
+        device->socket_fd = sockets[1];  // here i save the parent's socket descriptor
+        device->initialized = true;
         child_process(n);  // function for child process
         _exit(0);
     }
@@ -571,11 +605,16 @@ GOMP_OFFLOAD_alloc(int n, size_t size)
     simulated_device *device = &devices[n];
 
 ////    pthread_mutex_lock(&device->lock);
+    if (!validate_socket_connection(device->socket_fd)) {
+        GOMP_PLUGIN_error("Attempting to reconnect...\n");
+        // Reconnect or reinitialize the socket
+    }
 
     // Here i construct and send an allocation command
     char command[256];
     sprintf(command, "ALLOC %zu", size);
-    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+    int bytes_sent = send(device->socket_fd, command, strlen(command), 0);
+    if (bytes_sent < 0) {
         GOMP_PLUGIN_error("Failed to send allocation command\n");
 ////        pthread_mutex_unlock(&device->lock);
         return NULL;
