@@ -344,9 +344,9 @@ child_process(int n)
             handle_alloc(n, size);
         } else if (strncmp(buffer, "FREE", 4) == 0) {
             handle_free(n, buffer + 5);
-        } else if (strcmp(buffer, "LOAD_IMAGE") == 0) {
+        } else if (strncmp(buffer, "LOAD_IMAGE", 10) == 0) {
             handle_load_image(n);
-        } else if (strcmp(buffer, "UNLOAD_IMAGE") == 0) {
+        } else if (strncmp(buffer, "UNLOAD_IMAGE", 12) == 0) {
             handle_unload_image(n);
         } else if (strncmp(buffer, "HOST_TO_DEV", 11) == 0) {
             handle_host2dev(n, buffer + 12);
@@ -737,7 +737,7 @@ GOMP_OFFLOAD_host2dev(int n, void *dst, const void *src, size_t size)
         return false;
     }
 
-    if (strcmp(response, "OK") != 0) {
+    if (strncmp(response, "OK", 2) != 0) {
         GOMP_PLUGIN_error("Device reported an error during data transfer");
         return false;
     }
@@ -787,7 +787,7 @@ GOMP_OFFLOAD_dev2dev (int n, void *dst, const void *src, size_t size)
         return false;
     }
 
-    if (strcmp(response, "OK") != 0) {
+    if (strncmp(response, "OK", 2) != 0) {
         GOMP_PLUGIN_error("Device reported an error during data copy");
         return false;
     }
