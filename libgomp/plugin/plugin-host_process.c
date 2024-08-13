@@ -659,7 +659,7 @@ GOMP_OFFLOAD_free(int n, void *ptr)
 //    pthread_mutex_unlock(&device->lock);
     if (!found) {
         GOMP_PLUGIN_error("Pointer not recognized or already freed for device %d\n", n);
-        return false;
+        return true;
     }
 
     char response[64];
