@@ -110,28 +110,36 @@ check_device_validity(int n)
 
 
 void
-handle_alloc(int n, size_t size)
+handle_alloc(int n, const char *command_details)
 {
     simulated_device *device = &devices[n];
-    int index = -1;
-
-    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
-        if (device->allocations[i].ptr == NULL) {
-            index = i;
-            break;
-        }
+    size_t size;
+    int parsed = sscanf(command_details, "%zu", &size);
+    if (parsed != 1) {
+        GOMP_PLUGIN_error("Failed to parse ALLOC command details\n");
+        send(device->socket_fd, "ERROR", 5, 0);
+        return;
     }
 
-    void *ptr = NULL;
-    if (index != -1) {
-        ptr = malloc(size);
-        if (ptr) {
-            device->allocations[index].ptr = ptr;
-            device->allocations[index].size = size;
-        }
-    }
-
+    void *ptr = malloc(size);
     send(device->socket_fd, &ptr, sizeof(ptr), 0);
+
+//    int index = -1;
+//    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
+//        if (device->allocations[i].ptr == NULL) {
+//            index = i;
+//            break;
+//        }
+//    }
+//
+//    void *ptr = NULL;
+//    if (index != -1) {
+//        ptr = malloc(size);
+//        if (ptr) {
+//            device->allocations[index].ptr = ptr;
+//            device->allocations[index].size = size;
+//        }
+//    }
 }
 
 
@@ -226,7 +234,7 @@ handle_unload_image(int n)
 }
 
 void
-handle_host2dev(int n, const char *command_details)
+handle_host2dev(int n, const char *command_details, const char *data_end)
 {
     simulated_device *device = &devices[n];
     void *dst;
@@ -238,25 +246,41 @@ handle_host2dev(int n, const char *command_details)
         send(device->socket_fd, "ERROR", 5, 0);
         return;
     }
-
-    char *data = malloc(size);
-    if (!data) {
-        GOMP_PLUGIN_error("Memory allocation failed for data transfer\n");
-        send(device->socket_fd, "ERROR", 5, 0);
-        return;
-    }
-
-    int bytes_received = recv(device->socket_fd, data, size, 0);
-    if (bytes_received < (int)size) {
-        GOMP_PLUGIN_error("Failed to receive all data\n");
-        free(data);
-        send(device->socket_fd, "ERROR", 5, 0);
-        return;
-    }
-
-    memcpy(dst, data, size);
-    free(data);
+    size_t prefix_length = snprintf(NULL, 0, "%p %zu ", dst, size);
+    memcpy(dst, command_details + prefix_length, size);
     send(device->socket_fd, "OK", 2, 0);
+
+//    const char *data_start = command_details;
+//    for (int i = 0; i < 2; i++) {
+//        data_start = strchr(data_start, ' ');
+//        if (!data_start) {
+//            GOMP_PLUGIN_error("Failed to locate data start in command\n");
+//            send(device->socket_fd, "ERROR", 5, 0);
+//            return;
+//        }
+//        data_start++;
+//    }
+
+
+
+//    const char *data = command_details + data_offset;
+//
+//    char *data = malloc(size);
+//    if (!data) {
+//        GOMP_PLUGIN_error("Memory allocation failed for data transfer\n");
+//        send(device->socket_fd, "ERROR", 5, 0);
+//        return;
+//    }
+//
+//    int bytes_received = recv(device->socket_fd, data, size, 0);
+//    if (bytes_received < (int)size) {
+//        GOMP_PLUGIN_error("Failed to receive all data\n");
+//        free(data);
+//        send(device->socket_fd, "ERROR", 5, 0);
+//        return;
+//    }
+//    free(data);
+
 }
 
 void
@@ -312,6 +336,8 @@ handle_call_function(int n, const char *command_details)
         return;
     }
 
+//    fn_ptr(vars);
+
     if(call_function_with_args(fn_ptr, vars)) {
         send(device->socket_fd, "OK", 2, 0);
     } else {
@@ -323,10 +349,21 @@ void
 child_process(int n)
 {
     simulated_device *device = &devices[n];
-    char buffer[1024];
+//    char buffer[1 << 20];
+//    int pointer = 0;
 
     while (1) {
-        int bytes_received = recv(device->socket_fd, buffer, sizeof(buffer), 0);
+        size_t message_length;
+        size_t bytes_received = recv(device->socket_fd, &message_length, sizeof(message_length), 0);
+        if (bytes_received < sizeof(message_length)) {
+            printf("Failed to receive message length.\n");
+            return;
+        }
+//        pointer += bytes_received;
+        char *buffer = malloc(message_length + 1);
+        bytes_received = recv(device->socket_fd, buffer, message_length, 0);
+
+//        int bytes_received = recv(device->socket_fd, buffer, sizeof(buffer), 0);
         if (bytes_received == 0) { // connection was closed by the other side
             break;
         } else if (bytes_received < 0) {
@@ -338,10 +375,19 @@ child_process(int n)
             }
         }
 
+        size_t remaining = message_length;
+        remaining -= bytes_received;
+        while (remaining > 0) {
+            bytes_received = recv(device->socket_fd, buffer + bytes_received, remaining, 0);
+//            error handling
+            remaining -= bytes_received;
+        }
+
+
         buffer[bytes_received] = '\0';
         if (strncmp(buffer, "ALLOC", 5) == 0) {
-            size_t size = atoi(buffer + 6);
-            handle_alloc(n, size);
+//            size_t size = atoi(buffer + 6);
+            handle_alloc(n, buffer + 6);
         } else if (strncmp(buffer, "FREE", 4) == 0) {
             handle_free(n, buffer + 5);
         } else if (strncmp(buffer, "LOAD_IMAGE", 10) == 0) {
@@ -349,7 +395,7 @@ child_process(int n)
         } else if (strncmp(buffer, "UNLOAD_IMAGE", 12) == 0) {
             handle_unload_image(n);
         } else if (strncmp(buffer, "HOST_TO_DEV", 11) == 0) {
-            handle_host2dev(n, buffer + 12);
+            handle_host2dev(n, buffer + 12, &buffer[bytes_received]);
         } else if (strncmp(buffer, "DEV_TO_HOST", 11) == 0) {
             handle_dev2host(n, buffer + 12);
         } else if (strncmp(buffer, "CALL_FN", 7) == 0) {
@@ -580,10 +626,19 @@ GOMP_OFFLOAD_unload_image(int n, unsigned version, const void *target_data)
     if(!check_device_validity(n)) return false;
     simulated_device *device = &devices[n];
 
-    char command[256] = "UNLOAD_IMAGE";
-    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
-        GOMP_PLUGIN_error("Failed to send unload command\n");
-        return false;
+
+    char command[256];
+    size_t message_length = sprintf(command, "UNLOAD_IMAGE");
+    int bytes_sent = send(device->socket_fd, &message_length, sizeof(message_length), 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send command size\n");
+        return NULL;
+    }
+
+    bytes_sent = send(device->socket_fd, command, message_length, 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send UNLOAD_IMAGE command\n");
+        return NULL;
     }
 
     char response[64];
@@ -592,7 +647,7 @@ GOMP_OFFLOAD_unload_image(int n, unsigned version, const void *target_data)
         GOMP_PLUGIN_error("Failed to receive confirmation from device about unload operation");
         return false;
     }
-    GOMP_PLUGIN_debug(0, "%s", response);
+    GOMP_PLUGIN_debug(0, "%s\n", response);
 
     return true;
 }
@@ -605,15 +660,22 @@ GOMP_OFFLOAD_alloc(int n, size_t size)
     simulated_device *device = &devices[n];
 
 ////    pthread_mutex_lock(&device->lock);
-    if (!validate_socket_connection(device->socket_fd)) {
-        GOMP_PLUGIN_error("Attempting to reconnect...\n");
-        // Reconnect or reinitialize the socket
+//    if (!validate_socket_connection(device->socket_fd)) {
+//        GOMP_PLUGIN_error("Attempting to reconnect...\n");
+//        // Reconnect or reinitialize the socket
+//    }
+
+    char command[256];
+    size_t message_length = sprintf(command, "ALLOC %zu", size);
+    int bytes_sent = send(device->socket_fd, &message_length, sizeof(message_length), 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send command size\n");
+////        pthread_mutex_unlock(&device->lock);
+        return NULL;
     }
 
     // Here i construct and send an allocation command
-    char command[256];
-    sprintf(command, "ALLOC %zu", size);
-    int bytes_sent = send(device->socket_fd, command, strlen(command), 0);
+    bytes_sent = send(device->socket_fd, command, message_length, 0);
     if (bytes_sent < 0) {
         GOMP_PLUGIN_error("Failed to send allocation command\n");
 ////        pthread_mutex_unlock(&device->lock);
@@ -622,8 +684,8 @@ GOMP_OFFLOAD_alloc(int n, size_t size)
 
     // Seems like here i am expecting a response with the address of the allocated memory
     void *ptr;
-    int recv_size = recv(device->socket_fd, &ptr, sizeof(ptr), 0);
-    if (recv_size < sizeof(ptr)) {
+    int bytes_received = recv(device->socket_fd, &ptr, sizeof(ptr), 0);
+    if (bytes_received < sizeof(ptr)) {
         GOMP_PLUGIN_error("Failed to receive allocation response or allocation failed\n");
 ////        pthread_mutex_unlock(&device->lock);
         return NULL;
@@ -641,25 +703,39 @@ GOMP_OFFLOAD_free(int n, void *ptr)
     simulated_device *device = &devices[n];
 
 //    pthread_mutex_lock(&device->lock);
-    bool found = false;
-    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
-        if (device->allocations[i].ptr == ptr) {
-            char command[256];
-            sprintf(command, "FREE %p", ptr);
-            if (send(device->socket_fd, command, strlen(command), 0) < 0) {
-                GOMP_PLUGIN_error("Failed to send free command\n");
-////                pthread_mutex_unlock(&device->lock);
-                return false;
-            }
+//    bool found = false;
+//    for (int i = 0; i < MAX_ALLOCATIONS; i++) {
+//        if (device->allocations[i].ptr == ptr) {
+//            char command[256];
+//            sprintf(command, "FREE %p", ptr);
+//            if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+//                GOMP_PLUGIN_error("Failed to send free command\n");
+//////                pthread_mutex_unlock(&device->lock);
+//                return false;
+//            }
+//
+//            found = true;
+//            break;
+//        }
+//    }
+////    pthread_mutex_unlock(&device->lock);
+//    if (!found) {
+//        GOMP_PLUGIN_error("Pointer not recognized or already freed for device %d\n", n);
+//        return true;
+//    }
 
-            found = true;
-            break;
-        }
+    char command[256];
+    size_t message_length = sprintf(command, "FREE %p", ptr);
+    int bytes_sent = send(device->socket_fd, &message_length, sizeof(message_length), 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send command size\n");
+        return false;
     }
-//    pthread_mutex_unlock(&device->lock);
-    if (!found) {
-        GOMP_PLUGIN_error("Pointer not recognized or already freed for device %d\n", n);
-        return true;
+
+    bytes_sent = send(device->socket_fd, command, message_length, 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send free command\n");
+        return false;
     }
 
     char response[64];
@@ -668,7 +744,7 @@ GOMP_OFFLOAD_free(int n, void *ptr)
         GOMP_PLUGIN_error("Failed to receive confirmation from device about free operation");
         return false;
     }
-    GOMP_PLUGIN_debug(0, "%s", response);
+    GOMP_PLUGIN_debug(0, "%s\n", response);
 
     return true;
 }
@@ -695,9 +771,16 @@ GOMP_OFFLOAD_dev2host(int n, void *dst, const void *src, size_t size)
     if(!check_device_validity(n)) return false;
     simulated_device *device = &devices[n];
 
-    char command[64];
-    snprintf(command, sizeof(command), "DEV_TO_HOST %p %zu", src, size);
-    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+    char command[256];
+    size_t message_length = sprintf(command,  "DEV_TO_HOST %p %zu", src, size);
+    int bytes_sent = send(device->socket_fd, &message_length, sizeof(message_length), 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send command size\n");
+        return false;
+    }
+
+    bytes_sent = send(device->socket_fd, command, message_length, 0);
+    if (bytes_sent < 0) {
         GOMP_PLUGIN_error("Failed to send DEV_TO_HOST command to device");
         return false;
     }
@@ -719,17 +802,33 @@ GOMP_OFFLOAD_host2dev(int n, void *dst, const void *src, size_t size)
     if(!check_device_validity(n)) return false;
     simulated_device *device = &devices[n];
 
-    char command[64];
-    snprintf(command, sizeof(command), "HOST_TO_DEV %p %zu", dst, size);
-    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
-        GOMP_PLUGIN_error("Failed to send HOST_TO_DEV command to device");
+    int prefix_len = snprintf(NULL, 0, "HOST_TO_DEV %p %zu ", dst, size);
+    size_t total_length = prefix_len + size;
+
+    char *buffer = malloc(total_length);
+    if (!buffer) {
+        GOMP_PLUGIN_error("Failed to allocate buffer for command and data");
         return false;
     }
 
-    if (send(device->socket_fd, src, size, 0) < 0) {
-        GOMP_PLUGIN_error("Failed to send data to device");
+    // Write the command, including the offset to the data, into the buffer
+    int written = sprintf(buffer, "HOST_TO_DEV %p %zu ", dst, size);
+    memcpy(buffer + written, src, size);
+
+
+    int bytes_sent = send(device->socket_fd, &total_length, sizeof(total_length), 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send command size\n");
         return false;
     }
+
+    bytes_sent = send(device->socket_fd, buffer, total_length, 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send HOST_TO_DEV command and data to device");
+        free(buffer);
+        return false;
+    }
+    free(buffer);
 
     char response[64];
     if (recv(device->socket_fd, response, sizeof(response), 0) <= 0) {
@@ -751,9 +850,16 @@ GOMP_OFFLOAD_run (int n, void *fn_ptr, void *vars, void **args)
     if(!check_device_validity(n)) return;
     simulated_device *device = &devices[n];
 
-    char command[64];
-    snprintf(command, sizeof(command), "CALL_FN %p %p", fn_ptr, vars);
-    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+    char command[256];
+    size_t message_length = sprintf(command, "CALL_FN %p %p", fn_ptr, vars);
+    int bytes_sent = send(device->socket_fd, &message_length, sizeof(message_length), 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send command size\n");
+        return;
+    }
+
+    bytes_sent = send(device->socket_fd, command, message_length, 0);
+    if (bytes_sent < 0) {
         GOMP_PLUGIN_error("Failed to send CALL_FN command to device");
         return;
     }
@@ -763,7 +869,7 @@ GOMP_OFFLOAD_run (int n, void *fn_ptr, void *vars, void **args)
         GOMP_PLUGIN_error("Failed to receive confirmation from device about successful function call");
         return;
     }
-    GOMP_PLUGIN_debug(0, "%s", response);
+    GOMP_PLUGIN_debug(0, "%s\n", response);
 }
 
 
@@ -774,9 +880,16 @@ GOMP_OFFLOAD_dev2dev (int n, void *dst, const void *src, size_t size)
     if(!check_device_validity(n)) return false;
     simulated_device *device = &devices[n];
 
-    char command[64];
-    snprintf(command, sizeof(command), "DEV_TO_DEV %p %p %zu", dst, src, size);
-    if (send(device->socket_fd, command, strlen(command), 0) < 0) {
+    char command[256];
+    size_t message_length = sprintf(command, "DEV_TO_DEV %p %p %zu", dst, src, size);
+    int bytes_sent = send(device->socket_fd, &message_length, sizeof(message_length), 0);
+    if (bytes_sent < 0) {
+        GOMP_PLUGIN_error("Failed to send command size\n");
+        return false;
+    }
+
+    bytes_sent = send(device->socket_fd, command, message_length, 0);
+    if (bytes_sent < 0) {
         GOMP_PLUGIN_error("Failed to send DEV_TO_DEV command to device");
         return false;
     }
