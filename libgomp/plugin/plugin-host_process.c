@@ -56,7 +56,9 @@ GOMP_OFFLOAD_get_num_devices (unsigned int omp_requires_mask)
 bool
 call_function_with_args(void *fn_ptr, void *vars)
 {
-    return false;
+    void (*fn) (void *) = fn_ptr;
+    fn(vars);
+    return true;
 }
 
 
