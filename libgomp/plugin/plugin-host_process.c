@@ -38,7 +38,7 @@ GOMP_OFFLOAD_get_name (void)
 unsigned int
 GOMP_OFFLOAD_get_caps (void)
 {
-    return GOMP_OFFLOAD_CAP_NATIVE_EXEC | GOMP_OFFLOAD_CAP_OPENMP_400;
+    return GOMP_OFFLOAD_CAP_NATIVE_EXEC | GOMP_OFFLOAD_CAP_OPENMP_400 | GOMP_OFFLOAD_CAP_OPENACC_200;
 }
 
 int
@@ -871,75 +871,34 @@ GOMP_OFFLOAD_openacc_destroy_thread_data (void *data)
     free (data);
 }
 
-
-/* Execute an OpenACC kernel, synchronously or asynchronously.  */
-static void
-host_process_exec (void (*fn),
-          void **devaddrs, unsigned *dims, void *targ_mem_desc, bool async,
-          struct goacc_asyncqueue *aq)
-{
-
-}
-
-
-
-/* Run a synchronous OpenACC kernel.  The device number is inferred from the
-   already-loaded KERNEL.  */
 void
 GOMP_OFFLOAD_openacc_exec (void (*fn) (void *),
-                           size_t mapnum  __attribute__((unused)),
-                           void **hostaddrs __attribute__((unused)),
-                           void **devaddrs,
-                           unsigned *dims, void *targ_mem_desc)
+                           size_t mapnum __attribute__ ((unused)),
+                           void **hostaddrs,
+                           void **devaddrs __attribute__ ((unused)),
+                           unsigned *dims __attribute__ ((unused)),
+                           void *targ_mem_desc __attribute__ ((unused)))
 {
-    if (!fn) {
-        GOMP_PLUGIN_error("Invalid kernel function pointer.\n");
-        return;
-    }
-//    simulated_device *device = &devices[n];
-//    if (!device || !device->initialized) {
-//        GOMP_PLUGIN_error("Device not initialized or available.\n");
-//        return;
-//    }
-    host_process_exec (fn, devaddrs, dims, targ_mem_desc, false, NULL);
+    fn (hostaddrs);
 }
 
 void
 GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
-                                 size_t mapnum __attribute__((unused)),
-                                 void **hostaddrs __attribute__((unused)),
-                                 void **devaddrs,
-                                 unsigned *dims, void *targ_mem_desc,
-                                 struct goacc_asyncqueue *aq)
+                                 size_t mapnum __attribute__ ((unused)),
+                                 void **hostaddrs,
+                                 void **devaddrs __attribute__ ((unused)),
+                                 unsigned *dims __attribute__ ((unused)),
+                                 void *targ_mem_desc __attribute__ ((unused)),
+                                 struct goacc_asyncqueue *aq __attribute__ ((unused)))
 {
-    if (!fn) {
-        GOMP_PLUGIN_error("Invalid kernel function pointer.\n");
-        return;
-    }
-    host_process_exec (fn, devaddrs, dims, targ_mem_desc, true, NULL);
+    fn (hostaddrs);
 }
-
-
-void
-initialize_async_queue(struct goacc_asyncqueue *aq);
 
 
 typedef struct {
     void (*function)(void* data);
     void *data;
 } queue_task;
-
-
-/* A data struct for the copy_data callback.  */
-struct copy_data
-{
-    int device;
-    void *dst;
-    const void *src;
-    size_t len;
-    struct goacc_asyncqueue *aq;
-    bool host_to_device;
-};
 
 
 struct goacc_asyncqueue
@@ -961,230 +920,34 @@ struct goacc_asyncqueue
     struct goacc_asyncqueue *next;
 };
 
-void
-data_copy_function(void *data) // This function will handle the data copying
-{
-    struct copy_data *copy_data = (struct copy_data *)data;
-    if(copy_data->host_to_device) {
-        GOMP_OFFLOAD_host2dev(copy_data->device, copy_data->dst, copy_data->src, copy_data->len);
-    } else {
-        GOMP_OFFLOAD_dev2host(copy_data->device, copy_data->dst, copy_data->src, copy_data->len);
-    }
-}
-
-void
-push_async_task(struct goacc_asyncqueue *aq, queue_task task)
-{
-    pthread_mutex_lock(&aq->mutex);
-    while (aq->queue_n >= ASYNC_QUEUE_SIZE) {
-        pthread_cond_wait(&aq->queue_cond_out, &aq->mutex);
-    }
-
-    int idx = (aq->queue_first + aq->queue_n) % ASYNC_QUEUE_SIZE;
-    aq->queue[idx] = task;
-    aq->queue_n++;
-
-    pthread_cond_signal(&aq->queue_cond_in);
-    pthread_mutex_unlock(&aq->mutex);
-}
-
-bool
-GOMP_OFFLOAD_openacc_async_copy(int device, void *dst, const void *src, size_t n, struct goacc_asyncqueue *aq, bool host_to_device)
-{
-    if (!aq) {
-        GOMP_PLUGIN_error("Invalid async queue.\n");
-        return false;
-    }
-    struct copy_data *data = (struct copy_data *)malloc(sizeof(struct copy_data));
-    data->device = device;
-    data->dst = dst;
-    data->src = src;
-    data->len = n;
-    data->aq = aq;
-    data->host_to_device = host_to_device;
-
-    queue_task task;
-    task.function = data_copy_function;
-    task.data = data;
-
-    push_async_task(aq, task);
-    return true;
-}
-
 
 bool
 GOMP_OFFLOAD_openacc_async_host2dev(int device, void *dst, const void *src, size_t n, struct goacc_asyncqueue *aq)
 {
-    return GOMP_OFFLOAD_openacc_async_copy(device, dst, src, n, aq, true);
+    exit(EXIT_FAILURE);
+    return false;
 }
 
 
 bool
 GOMP_OFFLOAD_openacc_async_dev2host(int device, void *dst, const void *src, size_t n, struct goacc_asyncqueue *aq)
 {
-    return GOMP_OFFLOAD_openacc_async_copy(device, dst, src, n, aq, false);
-}
-
-
-void
-execute_queue_task(struct goacc_asyncqueue *aq, int queue_index)
-{
-    queue_task *task = &aq->queue[queue_index];
-    if (task->function) {
-        task->function(task->data);
-    } else {
-        GOMP_PLUGIN_error("Error: Task function is NULL at index %d\n", queue_index);
-    }
-}
-
-static void *
-drain_queue(void *thread_arg)
-{
-    struct goacc_asyncqueue *aq = (struct goacc_asyncqueue *) thread_arg;
-
-    if (aq->drain_queue_stop) {
-        aq->drain_queue_stop = 2;  // here i set a finalized state
-        return NULL;
-    }
-
-    pthread_mutex_lock(&aq->mutex);
-    while (true) {
-        if (aq->drain_queue_stop) {
-            break;
-        }
-
-        if (aq->queue_n > 0) {
-            pthread_mutex_unlock(&aq->mutex);  // Unlock while executing to allow other operations
-            execute_queue_task(aq, aq->queue_first);
-
-            pthread_mutex_lock(&aq->mutex);
-            aq->queue_first = (aq->queue_first + 1) % ASYNC_QUEUE_SIZE;
-            aq->queue_n--;
-
-            pthread_cond_broadcast(&aq->queue_cond_out);  // Notify others waiting for queue space
-            pthread_mutex_unlock(&aq->mutex);
-
-            pthread_mutex_lock(&aq->mutex);
-        } else {
-            pthread_cond_wait(&aq->queue_cond_in, &aq->mutex);  // waiting for new tasks
-        }
-    }
-
-    aq->drain_queue_stop = 2;
-    pthread_cond_broadcast(&aq->queue_cond_out);  // here we have final broadcast to release any waiting threads
-    pthread_mutex_unlock(&aq->mutex);
-
-    return NULL;
+    exit(EXIT_FAILURE);
+    return false;
 }
 
 struct goacc_asyncqueue *
 GOMP_OFFLOAD_openacc_async_construct(int n)
 {
-    simulated_device *device = &devices[n];
-    if (!device || !device->initialized) {
-        GOMP_PLUGIN_error("Device not initialized or available.\n");
-        return NULL;
-    }
-
-    pthread_mutex_lock(&device->lock);
-
-    struct goacc_asyncqueue *aq = malloc(sizeof(*aq));
-    if (!aq) {
-        GOMP_PLUGIN_error("Invalid async queue.\n");
-        pthread_mutex_unlock(&device->lock);
-        return NULL;
-    }
-
-    aq->device = device;
-    aq->prev = NULL;
-    aq->next = device->async_queues;
-    if (aq->next) {
-        aq->next->prev = aq;
-        aq->id = aq->next->id + 1;
-    } else {
-        aq->id = 1;
-    }
-    device->async_queues = aq;
-
-    pthread_mutex_init(&aq->mutex, NULL);
-    pthread_cond_init(&aq->queue_cond_in, NULL);
-    pthread_cond_init(&aq->queue_cond_out, NULL);
-
-    aq->queue_first = 0;
-    aq->queue_n = 0;
-    aq->drain_queue_stop = 0;
-
-    int err = pthread_create(&aq->thread_drain_queue, NULL, drain_queue, aq);
-    if (err != 0) {
-        fprintf(stderr, "Failed to create asynchronous thread: %s\n", strerror(err));
-        pthread_mutex_unlock(&device->lock);
-        free(aq);
-        return NULL;
-    }
-
-    pthread_mutex_unlock(&device->lock);
-    return aq;
-}
-
-
-static void
-finalize_async_thread(struct goacc_asyncqueue *aq)
-{
-    pthread_mutex_lock(&aq->mutex);
-    if (aq->drain_queue_stop == 2) {
-        pthread_mutex_unlock(&aq->mutex);
-        return;
-    }
-
-    aq->drain_queue_stop = 1; // signal the thread to stop
-    pthread_cond_signal(&aq->queue_cond_in); // wake up the thread if it's waiting
-
-    while (aq->drain_queue_stop != 2) {
-        pthread_cond_wait(&aq->queue_cond_out, &aq->mutex);
-    }
-
-    pthread_mutex_unlock(&aq->mutex);
-    pthread_join(aq->thread_drain_queue, NULL);
+    exit(EXIT_FAILURE);
+    return NULL;
 }
 
 
 bool
 GOMP_OFFLOAD_openacc_async_destruct(struct goacc_asyncqueue *aq)
 {
-    if (!aq) {
-        GOMP_PLUGIN_error("Invalid async queue.\n");
-        return false;
-    }
-    finalize_async_thread(aq);
-
-    pthread_mutex_lock(&aq->device->async_queues_mutex);
-
-    // destroy mutex and condition variables
-    int err;
-    if ((err = pthread_mutex_destroy(&aq->mutex))) {
-        fprintf(stderr, "Failed to destroy async queue mutex: %d\n", err);
-        goto fail;
-    }
-    if (pthread_cond_destroy(&aq->queue_cond_in)) {
-        fprintf(stderr, "Failed to destroy async queue condition variable\n");
-        goto fail;
-    }
-    if (pthread_cond_destroy(&aq->queue_cond_out)) {
-        fprintf(stderr, "Failed to destroy async queue condition variable\n");
-        goto fail;
-    }
-
-    // update linked list of queues
-    if (aq->prev) aq->prev->next = aq->next;
-    if (aq->next) aq->next->prev = aq->prev;
-    if (aq->device->async_queues == aq) aq->device->async_queues = aq->next;
-
-    pthread_mutex_unlock(&aq->device->async_queues_mutex);
-    free(aq);
-    return true;
-
-fail:
-    pthread_mutex_unlock(&aq->device->async_queues_mutex);
+    exit(EXIT_FAILURE);
     return false;
 }
 
@@ -1200,21 +963,82 @@ fail:
 //                                  size_t);
 
 
-//extern bool GOMP_OFFLOAD_can_run (void *);
-//extern void GOMP_OFFLOAD_async_run (int, void *, void *, void **, void *);
-//
-//extern void *GOMP_OFFLOAD_openacc_create_thread_data (int);
-//
-//extern int GOMP_OFFLOAD_openacc_async_test (struct goacc_asyncqueue *);
-//extern bool GOMP_OFFLOAD_openacc_async_synchronize (struct goacc_asyncqueue *);
-//extern bool GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *,
-//                                                  struct goacc_asyncqueue *);
-//extern void GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *,
-//                                                       void (*)(void *), void *);
+bool
+GOMP_OFFLOAD_can_run (void *fn_ptr)
+{
+    return true;
+}
+
+
+void
+GOMP_OFFLOAD_async_run (int device, void *tgt_fn, void *tgt_vars,
+                        void **args, void *async_data)
+{
+    exit(EXIT_FAILURE);
+}
+
+void *
+GOMP_OFFLOAD_openacc_create_thread_data (int ord __attribute__((unused)))
+{
+    return NULL;
+}
+
+int
+GOMP_OFFLOAD_openacc_async_test (struct goacc_asyncqueue *aq)
+{
+    exit(EXIT_FAILURE);
+    return 0;
+}
+
+bool
+GOMP_OFFLOAD_openacc_async_synchronize (struct goacc_asyncqueue *aq)
+{
+    exit(EXIT_FAILURE);
+    return false;
+}
+
+bool
+GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *aq1,
+                                      struct goacc_asyncqueue *aq2)
+{
+    exit(EXIT_FAILURE);
+    return false;
+}
+
+void
+GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *aq,
+                                           void (*fn) (void *), void *data)
+{
+    exit(EXIT_FAILURE);
+}
+
+
 //extern void *GOMP_OFFLOAD_openacc_cuda_get_current_device (void);
 //extern void *GOMP_OFFLOAD_openacc_cuda_get_current_context (void);
 //extern void *GOMP_OFFLOAD_openacc_cuda_get_stream (struct goacc_asyncqueue *);
 //extern int GOMP_OFFLOAD_openacc_cuda_set_stream (struct goacc_asyncqueue *,
 //                                                 void *);
-//extern union goacc_property_value
-//GOMP_OFFLOAD_openacc_get_property (int, enum goacc_property);
+
+
+union goacc_property_value
+GOMP_OFFLOAD_openacc_get_property (int n, enum goacc_property prop)
+{
+    union goacc_property_value nullval = { .val = 0 };
+
+    if (n >= GOMP_OFFLOAD_get_num_devices (0))
+        return nullval;
+
+    switch (prop)
+    {
+        case GOACC_PROPERTY_NAME:
+            return (union goacc_property_value) { .ptr = "GOMP" };
+        case GOACC_PROPERTY_VENDOR:
+            return (union goacc_property_value) { .ptr = "GNU" };
+        case GOACC_PROPERTY_DRIVER:
+            return (union goacc_property_value) { .ptr = VERSION };
+        case GOACC_PROPERTY_MEMORY:
+        case GOACC_PROPERTY_FREE_MEMORY:
+        default:
+            return nullval;
+    }
+}
