@@ -390,6 +390,8 @@ child_process(int n)
             handle_call_function(n, buffer + 8);
         } else if (strncmp(buffer, "DEV_TO_DEV", 10) == 0) {
             handle_dev2dev(n, buffer + 11);
+//        } else if (strncmp(buffer, "OACC_CALL_FN", 12) == 0) {
+//            handle_call_function(n, buffer + 13);
         }
     }
     close(device->socket_fd);
@@ -879,7 +881,9 @@ GOMP_OFFLOAD_openacc_exec (void (*fn) (void *),
                            unsigned *dims __attribute__ ((unused)),
                            void *targ_mem_desc __attribute__ ((unused)))
 {
-    fn (hostaddrs);
+    GOMP_PLUGIN_debug(0, "Beginning of GOMP_OFFLOAD_openacc_exec function\n");
+    GOMP_OFFLOAD_run(0, fn, devaddrs, NULL);
+    GOMP_PLUGIN_debug(0, "End of GOMP_OFFLOAD_openacc_exec function\n");
 }
 
 void
@@ -891,7 +895,8 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
                                  void *targ_mem_desc __attribute__ ((unused)),
                                  struct goacc_asyncqueue *aq __attribute__ ((unused)))
 {
-    fn (hostaddrs);
+    exit(EXIT_FAILURE);
+//    fn (devaddrs);
 }
 
 
