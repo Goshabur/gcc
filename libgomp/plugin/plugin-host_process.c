@@ -895,7 +895,7 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
                                  void *targ_mem_desc __attribute__ ((unused)),
                                  struct goacc_asyncqueue *aq __attribute__ ((unused)))
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
 //    fn (devaddrs);
 }
 
@@ -929,7 +929,7 @@ struct goacc_asyncqueue
 bool
 GOMP_OFFLOAD_openacc_async_host2dev(int device, void *dst, const void *src, size_t n, struct goacc_asyncqueue *aq)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
     return false;
 }
 
@@ -937,14 +937,14 @@ GOMP_OFFLOAD_openacc_async_host2dev(int device, void *dst, const void *src, size
 bool
 GOMP_OFFLOAD_openacc_async_dev2host(int device, void *dst, const void *src, size_t n, struct goacc_asyncqueue *aq)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
     return false;
 }
 
 struct goacc_asyncqueue *
 GOMP_OFFLOAD_openacc_async_construct(int n)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
     return NULL;
 }
 
@@ -952,7 +952,7 @@ GOMP_OFFLOAD_openacc_async_construct(int n)
 bool
 GOMP_OFFLOAD_openacc_async_destruct(struct goacc_asyncqueue *aq)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
     return false;
 }
 
@@ -979,7 +979,7 @@ void
 GOMP_OFFLOAD_async_run (int device, void *tgt_fn, void *tgt_vars,
                         void **args, void *async_data)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
 }
 
 void *
@@ -991,14 +991,14 @@ GOMP_OFFLOAD_openacc_create_thread_data (int ord __attribute__((unused)))
 int
 GOMP_OFFLOAD_openacc_async_test (struct goacc_asyncqueue *aq)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
     return 0;
 }
 
 bool
 GOMP_OFFLOAD_openacc_async_synchronize (struct goacc_asyncqueue *aq)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
     return false;
 }
 
@@ -1006,7 +1006,7 @@ bool
 GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *aq1,
                                       struct goacc_asyncqueue *aq2)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
     return false;
 }
 
@@ -1014,7 +1014,7 @@ void
 GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *aq,
                                            void (*fn) (void *), void *data)
 {
-    exit(EXIT_FAILURE);
+    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
 }
 
 
