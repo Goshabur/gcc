@@ -895,8 +895,10 @@ GOMP_OFFLOAD_openacc_async_exec (void (*fn) (void *),
                                  void *targ_mem_desc __attribute__ ((unused)),
                                  struct goacc_asyncqueue *aq __attribute__ ((unused)))
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-//    fn (devaddrs);
+    GOMP_PLUGIN_debug(0, "Beginning of GOMP_OFFLOAD_openacc_async_exec function\n");
+    GOMP_OFFLOAD_run(0, fn, devaddrs, NULL);
+    GOMP_PLUGIN_debug(0, "End of GOMP_OFFLOAD_openacc_async_exec function\n");
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
 }
 
 
@@ -929,31 +931,41 @@ struct goacc_asyncqueue
 bool
 GOMP_OFFLOAD_openacc_async_host2dev(int device, void *dst, const void *src, size_t n, struct goacc_asyncqueue *aq)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-    return false;
+    GOMP_PLUGIN_debug(0, "Beginning of GOMP_OFFLOAD_openacc_async_host2dev function\n");
+    bool result = GOMP_OFFLOAD_host2dev(device, dst, src, n);
+    GOMP_PLUGIN_debug(0, "End of GOMP_OFFLOAD_openacc_async_host2dev function\n");
+    return result;
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    return false;
 }
 
 
 bool
 GOMP_OFFLOAD_openacc_async_dev2host(int device, void *dst, const void *src, size_t n, struct goacc_asyncqueue *aq)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-    return false;
+    GOMP_PLUGIN_debug(0, "Beginning of GOMP_OFFLOAD_openacc_async_dev2host function\n");
+    bool result = GOMP_OFFLOAD_dev2host(device, dst, src, n);
+    GOMP_PLUGIN_debug(0, "End of GOMP_OFFLOAD_openacc_async_dev2host function\n");
+    return result;
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    return false;
 }
 
 struct goacc_asyncqueue *
 GOMP_OFFLOAD_openacc_async_construct(int n)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-    return NULL;
+    return (struct goacc_asyncqueue *) -1;
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    return NULL;
 }
 
 
 bool
 GOMP_OFFLOAD_openacc_async_destruct(struct goacc_asyncqueue *aq)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-    return false;
+    return true;
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    return false;
 }
 
 
@@ -979,7 +991,9 @@ void
 GOMP_OFFLOAD_async_run (int device, void *tgt_fn, void *tgt_vars,
                         void **args, void *async_data)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+    void (*fn)(void *) = (void (*)(void *)) tgt_fn;
+    fn (tgt_vars);
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
 }
 
 void *
@@ -991,30 +1005,33 @@ GOMP_OFFLOAD_openacc_create_thread_data (int ord __attribute__((unused)))
 int
 GOMP_OFFLOAD_openacc_async_test (struct goacc_asyncqueue *aq)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-    return 0;
+    return 1;
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    return 0;
 }
 
 bool
 GOMP_OFFLOAD_openacc_async_synchronize (struct goacc_asyncqueue *aq)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-    return false;
+    return true;
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    return false;
 }
 
 bool
 GOMP_OFFLOAD_openacc_async_serialize (struct goacc_asyncqueue *aq1,
                                       struct goacc_asyncqueue *aq2)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
-    return false;
+    return true;
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    return false;
 }
 
 void
 GOMP_OFFLOAD_openacc_async_queue_callback (struct goacc_asyncqueue *aq,
                                            void (*fn) (void *), void *data)
 {
-    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
+//    GOMP_PLUGIN_fatal ("%s", __FUNCTION__);
 }
 
 

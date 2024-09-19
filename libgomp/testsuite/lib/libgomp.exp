@@ -249,6 +249,12 @@ proc libgomp_init { args } {
     set gcc_warning_prefix "\[Ww\]arning:"
     global gcc_error_prefix
     set gcc_error_prefix "(\[Ff\]atal )?\[Ee\]rror:"
+
+    # TODO
+    global tool_timeout
+    if {![info exists tool_timeout]} {
+      set tool_timeout 30
+    }
 }
 
 #
